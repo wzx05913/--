@@ -22,13 +22,15 @@ def build_weak_label(window_id: int, total_seen: int, fault: str, peak: float, h
     if total_seen <= 2 * cfg.healthy_reference_windows:
         return 0, "insufficient_support"
 
-    # 【修改点 2】：不管真实故障是什么，只要超过阈值，统一标记为类别 1 (Anomaly/Degradation)
+    # 恢复基于元数据的真实故障类别注入
+    target_label = FAULT_TO_CLASS.get(fault, 1)
+
     if healthy_peak_ref > 0 and peak > cfg.failure_multiplier * healthy_peak_ref:
-        return 1, "anomaly_detected"
+        return target_label, "anomaly_detected"
 
     damage_ratio = peak / (cfg.failure_multiplier * healthy_peak_ref + 1e-12)
     if damage_ratio >= cfg.weak_label_degrade_ratio:
-        return 1, "degradation_warning"
+        return target_label, "degradation_warning"
 
     return 0, "pre_degradation"
 
