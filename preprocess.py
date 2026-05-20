@@ -70,6 +70,8 @@ def build_bearing_dataframe(bearing_id: str, cfg: PipelineConfig, max_windows: i
         return pd.DataFrame()
 
     df = pd.DataFrame(rows).sort_values("file_index").reset_index(drop=True)
+    if "rms_combined" not in df.columns:
+        return pd.DataFrame()
     baseline_count = min(max(1, cfg.baseline_windows), len(df))
     baseline_rms = float(df.loc[: baseline_count - 1, "rms_combined"].mean())
     if baseline_rms <= 1e-12:

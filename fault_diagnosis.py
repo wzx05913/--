@@ -88,7 +88,8 @@ def classification_metrics(y_true: np.ndarray, y_pred: np.ndarray, n_classes: in
         tp = int(np.sum((y_true == c) & (y_pred == c)))
         fp = int(np.sum((y_true != c) & (y_pred == c)))
         fn = int(np.sum((y_true == c) & (y_pred != c)))
-        f1s.append(float(2 * tp / max(2 * tp + fp + fn, 1)))
+        denom = 2 * tp + fp + fn
+        f1s.append(float(2 * tp / denom) if denom > 0 else 0.0)
         weights.append(float(np.mean(y_true == c)))
         cm.append([int(np.sum((y_true == c) & (y_pred == j))) for j in range(n_classes)])
 

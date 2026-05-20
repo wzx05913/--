@@ -54,6 +54,7 @@ class PipelineConfig:
 
     baseline_windows: int = 50
     forecast_horizon: int = 10
+    # Conservative defaults from observed XJTU-SY RMS escalation: <1.6 healthy, 1.6~3.0 warning, >=3.0 degraded.
     stage_thresholds: Tuple[float, float] = (1.6, 3.0)
     lag_steps: Tuple[int, ...] = (1, 2, 3, 5, 10)
     calendar_periods: Tuple[int, ...] = (5, 10, 20, 60, 120)

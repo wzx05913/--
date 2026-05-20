@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import numpy as np
 
@@ -20,18 +20,18 @@ class HealthIndexBuilder:
     def _selected_features(self, row: Dict[str, float]) -> List[str]:
         return [k for k in self.cfg.degradation_directions if k in row]
 
-    def update(self, row: Dict[str, float], shap_top: Optional[List[Tuple[str, float]]] = None) -> Dict[str, object]:
+    def update(self, row: Dict[str, float]) -> Dict[str, object]:
         self.history.append(row)
         feats = self._selected_features(row)
         arr = {k: np.array([h[k] for h in self.history if k in h], dtype=float) for k in feats}
-        healthy = self.history[: max(1, min(len(self.history), self.cfg.baseline_windows))]
-        recent = self.history[-max(1, min(len(self.history), self.cfg.baseline_windows)):]
+        baseline_period = self.history[: max(1, min(len(self.history), self.cfg.baseline_windows))]
+        recent_period = self.history[-max(1, min(len(self.history), self.cfg.baseline_windows)):]
 
         weights = {k: (1.0 / max(len(feats), 1)) for k in feats}
         damages = {}
         for k in feats:
-            hvals = np.array([r[k] for r in healthy if k in r], dtype=float)
-            rvals = np.array([r[k] for r in recent if k in r], dtype=float)
+            hvals = np.array([r[k] for r in baseline_period if k in r], dtype=float)
+            rvals = np.array([r[k] for r in recent_period if k in r], dtype=float)
             qh = float(np.quantile(hvals, self.cfg.healthy_quantile)) if len(hvals) else row[k]
             direction = self.cfg.degradation_directions.get(k, "positive")
             if direction == "reverse":

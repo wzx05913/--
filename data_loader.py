@@ -38,7 +38,10 @@ def sorted_csv_files(bearing_id: str, cfg: PipelineConfig) -> List[Path]:
 
 
 def _read_csv_two_channels(path: Path) -> np.ndarray:
-    df = pd.read_csv(path, usecols=[0, 1])
+    try:
+        df = pd.read_csv(path, usecols=[0, 1])
+    except Exception as exc:
+        raise ValueError(f"{path} must contain at least 2 columns for horizontal/vertical channels") from exc
     df = df.apply(pd.to_numeric, errors="coerce")
     arr = df.dropna().values
     if arr.ndim == 1 and arr.size >= 2:

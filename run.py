@@ -28,9 +28,7 @@ def _write_rows_csv(rows: List[Dict[str, object]], path: Path) -> None:
 
     path.parent.mkdir(parents=True, exist_ok=True)
     if not rows:
-        with path.open("w", newline="", encoding="utf-8-sig") as f:
-            writer = csv.writer(f)
-            writer.writerow(["empty"])
+        path.touch()
         return
     keys = list(rows[0].keys())
     extras = sorted({k for r in rows for k in r.keys()} - set(keys))
@@ -137,9 +135,10 @@ def run_lobo(cfg: PipelineConfig, args: argparse.Namespace, logger: logging.Logg
 
         diagnoser = OfflineFaultDiagnoser(cfg)
         diagnoser.fit(x_train, y_train)
-        probs = diagnoser.predict_proba(x_test, n_classes=3)
+        n_classes = len(FAULT_LABELS)
+        probs = diagnoser.predict_proba(x_test, n_classes=n_classes)
         y_pred = np.argmax(probs, axis=1).astype(int)
-        metrics = classification_metrics(y_test, y_pred, n_classes=3)
+        metrics = classification_metrics(y_test, y_pred, n_classes=n_classes)
 
         hi_builder = HealthIndexBuilder(cfg)
         rul_predictor = RULPredictor(cfg)
@@ -149,13 +148,17 @@ def run_lobo(cfg: PipelineConfig, args: argparse.Namespace, logger: logging.Logg
         rul_rows: List[Dict[str, object]] = []
 
         pred_degraded = np.where(y_pred > 0)[0]
-        fpt_index = int(test_df.loc[int(pred_degraded[0]), "file_index"]) if len(pred_degraded) else None
+        fpt_index = int(test_df.iloc[int(pred_degraded[0])]["file_index"]) if len(pred_degraded) > 0 else None
+
+        missing_hi_features = [k for k in cfg.degradation_directions if k not in test_df.columns]
+        if missing_hi_features:
+            logger.warning("%s missing HI features: %s", target, missing_hi_features)
 
         for i, (_, row) in enumerate(test_df.iterrows()):
             feat_row = {k: float(row[k]) for k in cfg.degradation_directions if k in row}
             hi = hi_builder.update(feat_row)
             rul = rul_predictor.update(float(hi["HI"]))
-            shap_top = top_feature_effects(x_test[i], feature_cols, top_k=cfg.shap_top_k)
+            top_features = top_feature_effects(x_test[i], feature_cols, top_k=cfg.shap_top_k)
 
             base_meta = {
                 "bearing_id": target,
@@ -169,7 +172,7 @@ def run_lobo(cfg: PipelineConfig, args: argparse.Namespace, logger: logging.Logg
                 "true_future_stage_name": FAULT_LABELS[int(y_test[i])],
                 "pred_future_stage_name": FAULT_LABELS[int(y_pred[i])],
                 "model_kind": diagnoser.model_kind,
-                "shap_top": json.dumps(shap_top, ensure_ascii=False),
+                "top_features": json.dumps(top_features, ensure_ascii=False),
                 **{f"prob_{j}": float(probs[i, j]) for j in range(probs.shape[1])},
             })
             hi_rows.append({
