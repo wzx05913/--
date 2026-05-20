@@ -28,14 +28,13 @@ BEARING_CONFIG: Dict[str, Dict[str, object]] = {
     "Bearing3_5": {"condition": 3, "speed_hz": 40.0, "load_kn": 10, "fault": "Outer race"},
 }
 CONDITION_DIRS = {1: "35Hz12kN", 2: "37.5Hz11kN", 3: "40Hz10kN"}
-FAULT_LABELS = {0: "非常健康", 1: "疑似内圈问题", 2: "疑似外圈问题", 3: "疑似保持架问题", 4: "疑似滚动体问题", 5: "疑似混合问题"}
-FAULT_TO_CLASS = {"Healthy": 0, "Inner race": 1, "Outer race": 2, "Cage": 3, "Ball": 4, "Rolling element": 4, "Mixed": 5}
+FAULT_LABELS = {0: "非常健康", 1: "退化预警", 2: "故障退化"}
 
 
 @dataclass
 class PipelineConfig:
     data_root: Path = Path("D:/Desktop/数据集实验/西交数据集/data/XJTU-SY_Bearing_Datasets")
-    output_dir: Path = Path("output")
+    output_dir: Path = Path("output_v2")
     sampling_rate_hz: float = SAMPLE_RATE_HZ
     csv_rows: int = CSV_ROWS
     p: float = 1.0
@@ -52,12 +51,22 @@ class PipelineConfig:
     rul_max_steps: int = 200
     rul_recent_points: int = 8
     rul_ci_z: float = 1.96
-    healthy_reference_windows: int = 3
-    failure_multiplier: float = 10.0
-    weak_label_degrade_ratio: float = 0.35
-    shap_top_k: int = 8
-    shap_background: int = 20
-    shap_nsamples: int = 50
+
+    baseline_windows: int = 50
+    forecast_horizon: int = 10
+    stage_thresholds: Tuple[float, float] = (1.6, 3.0)
+    lag_steps: Tuple[int, ...] = (1, 2, 3, 5, 10)
+    calendar_periods: Tuple[int, ...] = (5, 10, 20, 60, 120)
+    lag_feature_bases: Tuple[str, ...] = (
+        "rms_combined",
+        "kurt_max",
+        "horizontal_crest",
+        "vertical_crest",
+        "horizontal_spectral_entropy",
+        "vertical_spectral_entropy",
+        "rms_over_baseline",
+    )
+
     tabpfn_regressor_model_path: Path = Path("model/tabpfn-v3-regressor-v3_20260506_timeseries.ckpt")
     tabpfn_classifier_model_path: Path = Path("model/tabpfn-v3-classifier-v3_20260417_multiclass.ckpt")
     device: Optional[str] = None
@@ -67,6 +76,7 @@ class PipelineConfig:
         "horizontal_kurt": "positive", "vertical_kurt": "positive", "kurt_max": "positive",
         "horizontal_crest": "positive", "vertical_crest": "positive", "horizontal_impulse": "positive", "vertical_impulse": "positive",
         "horizontal_peak": "positive", "vertical_peak": "positive", "energyratio_hv": "positive", "rho_hv": "reverse",
+        "rms_over_baseline": "positive",
     })
 
     def window_size(self) -> int:
