@@ -5,7 +5,10 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
-from .config import PipelineConfig, resolve_device
+try:
+    from .config import PipelineConfig, resolve_device
+except ImportError:  # pragma: no cover
+    from config import PipelineConfig, resolve_device
 
 
 @dataclass

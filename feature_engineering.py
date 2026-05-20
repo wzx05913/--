@@ -4,8 +4,12 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
-from .config import CHANNEL_NAMES, PipelineConfig, compute_fault_freqs
-from .data_loader import WindowRecord
+try:
+    from .config import CHANNEL_NAMES, PipelineConfig, compute_fault_freqs
+    from .data_loader import WindowRecord
+except ImportError:  # pragma: no cover
+    from config import CHANNEL_NAMES, PipelineConfig, compute_fault_freqs
+    from data_loader import WindowRecord
 
 EPS = 1e-12
 
