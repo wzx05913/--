@@ -112,24 +112,40 @@ def _feature_columns(df: pd.DataFrame) -> List[str]:
     return [c for c in df.columns if c not in excluded and np.issubdtype(df[c].dtype, np.number)]
 
 
-def run_lobo(cfg: PipelineConfig, args: argparse.Namespace, logger: logging.Logger) -> None:
+def _build_or_load_dataset(cfg: PipelineConfig, args: argparse.Namespace, logger: logging.Logger) -> Dict[str, pd.DataFrame]:
+    """Build per-bearing feature tables or load from a cached parquet.
+
+    Cache location: <output_dir>/features/dataset.parquet
+
+    Notes:
+    - Cache is keyed by the exact feature columns and labels at build time.
+    - If you change preprocessing parameters (p/wavelet/baseline_windows/thresholds/etc.),
+      you should rebuild with --rebuild-dataset.
+    """
+
     import time
 
-    bearings = [b for b in args.bearings if b in BEARING_CONFIG]
+    cache_path = cfg.output_dir / "features" / "dataset.parquet"
+    if args.use_cache and cache_path.exists() and not args.rebuild_dataset:
+        logger.info("[DATA] 发现缓存数据集: %s", cache_path)
+        t0 = time.time()
+        df_all = pd.read_parquet(cache_path)
+        logger.info("[DATA] 已加载缓存数据集 | rows=%d cols=%d | 耗时=%.2fs", len(df_all), int(df_all.shape[1]), time.time() - t0)
+        out: Dict[str, pd.DataFrame] = {}
+        for b in args.bearings:
+            out[b] = df_all[df_all["bearing_id"] == b].sort_values("file_index").reset_index(drop=True)
+        return out
 
-    # -----------------------
-    # Preprocess / feature build
-    # -----------------------
+    # Build bearing-by-bearing to expose progress
+    bearings = [b for b in args.bearings if b in BEARING_CONFIG]
     logger.info("[PREP] 开始构建全部轴承的特征与标签，共 %d 个轴承...", len(bearings))
     t0 = time.time()
 
-    # Build bearing-by-bearing to expose progress (previously a single call with no logs)
     all_df: Dict[str, pd.DataFrame] = {}
     for i, b in enumerate(bearings, start=1):
         t_b0 = time.time()
         logger.info("[PREP] (%d/%d) 处理 %s ...", i, len(bearings), b)
         try:
-            # use existing helper but only for one bearing to keep code reuse
             one = build_all_bearings(cfg, bearings=[b], max_windows=args.max_windows)
             df_b = one.get(b, pd.DataFrame())
             all_df[b] = df_b
@@ -148,6 +164,29 @@ def run_lobo(cfg: PipelineConfig, args: argparse.Namespace, logger: logging.Logg
 
     logger.info("[PREP] 全部轴承构建完成，总耗时=%.2fs", time.time() - t0)
 
+    # Save cache
+    try:
+        df_all = pd.concat([df for df in all_df.values() if not df.empty], ignore_index=True)
+        if not df_all.empty:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            df_all.to_parquet(cache_path, index=False)
+            logger.info("[DATA] 已写入缓存数据集: %s | rows=%d cols=%d", cache_path, len(df_all), int(df_all.shape[1]))
+        else:
+            logger.warning("[DATA] 未生成任何有效数据，跳过缓存写入")
+    except Exception as e:
+        logger.exception("[DATA] 写入缓存数据集失败: %s", e)
+
+    return all_df
+
+
+def run_lobo(cfg: PipelineConfig, args: argparse.Namespace, logger: logging.Logger) -> None:
+    import time
+
+    bearings = [b for b in args.bearings if b in BEARING_CONFIG]
+
+    # Load or build dataset
+    all_df = _build_or_load_dataset(cfg, args, logger)
+
     # -----------------------
     # LOBO evaluation
     # -----------------------
@@ -155,7 +194,7 @@ def run_lobo(cfg: PipelineConfig, args: argparse.Namespace, logger: logging.Logg
     for target in bearings:
         logger.info("[LOBO] 开始 target=%s", target)
         test_df = all_df.get(target, pd.DataFrame())
-        train_parts = [all_df[b] for b in bearings if b != target and not all_df[b].empty]
+        train_parts = [all_df[b] for b in bearings if b != target and b in all_df and not all_df[b].empty]
         train_df = pd.concat(train_parts, ignore_index=True) if train_parts else pd.DataFrame()
 
         if test_df.empty or train_df.empty:
@@ -292,6 +331,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-windows", type=int, default=0)
     p.add_argument("--data-root", default=r"D:\Desktop\数据集实验\西交数据集\data\XJTU-SY_Bearing_Datasets")
     p.add_argument("--output-dir", default="output_v2")
+    p.add_argument("--use-cache", action="store_true", help="读取/写入预处理缓存表 (parquet)")
+    p.add_argument("--rebuild-dataset", action="store_true", help="强制重新生成预处理缓存表")
     return p.parse_args()
 
 
@@ -307,7 +348,16 @@ def main() -> None:
     )
     cfg.ensure_dirs()
     logger = _setup_logger(cfg.output_dir / "logs" / "run.log")
-    logger.info("启动 XJTU-SY LOBO 离线流水线: bearings=%s p=%s wavelet=%s device=%s lambda_hi=%s", args.bearings, cfg.p, cfg.wavelet, cfg.device, cfg.hi_lambda)
+    logger.info(
+        "启动 XJTU-SY LOBO 离线流水线: bearings=%s p=%s wavelet=%s device=%s lambda_hi=%s use_cache=%s rebuild=%s",
+        args.bearings,
+        cfg.p,
+        cfg.wavelet,
+        cfg.device,
+        cfg.hi_lambda,
+        bool(args.use_cache),
+        bool(args.rebuild_dataset),
+    )
     run_lobo(cfg, args, logger)
     logger.info("全部完成，结果已保存到 %s", cfg.output_dir)
 
