@@ -133,14 +133,12 @@ def _build_or_load_dataset(cfg: PipelineConfig, args: argparse.Namespace, logger
         logger.info("[DATA] 已加载缓存数据集 | rows=%d cols=%d | 耗时=%.2fs", len(df_all), int(df_all.shape[1]), time.time() - t0)
 
         # IMPORTANT: load ALL bearings from cache so LOBO can build train split.
+        all_bearings = sorted(df_all["bearing_id"].unique())
         out: Dict[str, pd.DataFrame] = {}
-        for b in sorted(df_all["bearing_id"].unique()):
+        for b in all_bearings:
             out[b] = df_all[df_all["bearing_id"] == b].sort_values("file_index").reset_index(drop=True)
 
-        # If user requested a subset, filter after the full split is available.
-        if args.bearings:
-            wanted = set(args.bearings)
-            out = {b: df for b, df in out.items() if b in wanted}
+        logger.info("[DATA] 缓存中包含 %d 个轴承: %s", len(all_bearings), all_bearings)
         return out
 
     # Build bearing-by-bearing to expose progress
@@ -192,7 +190,7 @@ def run_lobo(cfg: PipelineConfig, args: argparse.Namespace, logger: logging.Logg
     # Load or build dataset
     all_df = _build_or_load_dataset(cfg, args, logger)
 
-    # Use requested bearings as evaluation targets, but keep all_df for building train splits.
+    # Use requested bearings as evaluation targets (subset), but keep all_df for building train splits.
     targets = [b for b in args.bearings if b in BEARING_CONFIG]
 
     # -----------------------
