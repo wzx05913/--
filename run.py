@@ -131,9 +131,16 @@ def _build_or_load_dataset(cfg: PipelineConfig, args: argparse.Namespace, logger
         t0 = time.time()
         df_all = pd.read_parquet(cache_path)
         logger.info("[DATA] 已加载缓存数据集 | rows=%d cols=%d | 耗时=%.2fs", len(df_all), int(df_all.shape[1]), time.time() - t0)
+
+        # IMPORTANT: load ALL bearings from cache so LOBO can build train split.
         out: Dict[str, pd.DataFrame] = {}
-        for b in args.bearings:
+        for b in sorted(df_all["bearing_id"].unique()):
             out[b] = df_all[df_all["bearing_id"] == b].sort_values("file_index").reset_index(drop=True)
+
+        # If user requested a subset, filter after the full split is available.
+        if args.bearings:
+            wanted = set(args.bearings)
+            out = {b: df for b, df in out.items() if b in wanted}
         return out
 
     # Build bearing-by-bearing to expose progress
@@ -182,19 +189,20 @@ def _build_or_load_dataset(cfg: PipelineConfig, args: argparse.Namespace, logger
 def run_lobo(cfg: PipelineConfig, args: argparse.Namespace, logger: logging.Logger) -> None:
     import time
 
-    bearings = [b for b in args.bearings if b in BEARING_CONFIG]
-
     # Load or build dataset
     all_df = _build_or_load_dataset(cfg, args, logger)
+
+    # Use requested bearings as evaluation targets, but keep all_df for building train splits.
+    targets = [b for b in args.bearings if b in BEARING_CONFIG]
 
     # -----------------------
     # LOBO evaluation
     # -----------------------
     summary_rows: List[Dict[str, object]] = []
-    for target in bearings:
+    for target in targets:
         logger.info("[LOBO] 开始 target=%s", target)
         test_df = all_df.get(target, pd.DataFrame())
-        train_parts = [all_df[b] for b in bearings if b != target and b in all_df and not all_df[b].empty]
+        train_parts = [df for b, df in all_df.items() if b != target and not df.empty]
         train_df = pd.concat(train_parts, ignore_index=True) if train_parts else pd.DataFrame()
 
         if test_df.empty or train_df.empty:
@@ -318,7 +326,9 @@ def run_lobo(cfg: PipelineConfig, args: argparse.Namespace, logger: logging.Logg
             fpt_index,
         )
 
-    _write_rows_csv(summary_rows, cfg.output_dir / "GLOBAL_SUMMARY.csv")
+    # Only write summary when we evaluated at least one bearing.
+    if summary_rows:
+        _write_rows_csv(summary_rows, cfg.output_dir / "GLOBAL_SUMMARY.csv")
 
 
 def parse_args() -> argparse.Namespace:
