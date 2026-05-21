@@ -68,6 +68,9 @@ class PipelineConfig:
         "rms_over_baseline",
     )
 
+    # number of top features to emit in diagnosis CSV for explainability
+    shap_top_k: int = 8
+
     tabpfn_regressor_model_path: Path = Path("model/tabpfn-v3-regressor-v3_20260506_timeseries.ckpt")
     tabpfn_classifier_model_path: Path = Path("model/tabpfn-v3-classifier-v3_20260417_multiclass.ckpt")
     device: Optional[str] = None
