@@ -113,30 +113,74 @@ def _feature_columns(df: pd.DataFrame) -> List[str]:
 
 
 def run_lobo(cfg: PipelineConfig, args: argparse.Namespace, logger: logging.Logger) -> None:
-    bearings = [b for b in args.bearings if b in BEARING_CONFIG]
-    all_df = build_all_bearings(cfg, bearings=bearings, max_windows=args.max_windows)
+    import time
 
+    bearings = [b for b in args.bearings if b in BEARING_CONFIG]
+
+    # -----------------------
+    # Preprocess / feature build
+    # -----------------------
+    logger.info("[PREP] 开始构建全部轴承的特征与标签，共 %d 个轴承...", len(bearings))
+    t0 = time.time()
+
+    # Build bearing-by-bearing to expose progress (previously a single call with no logs)
+    all_df: Dict[str, pd.DataFrame] = {}
+    for i, b in enumerate(bearings, start=1):
+        t_b0 = time.time()
+        logger.info("[PREP] (%d/%d) 处理 %s ...", i, len(bearings), b)
+        try:
+            # use existing helper but only for one bearing to keep code reuse
+            one = build_all_bearings(cfg, bearings=[b], max_windows=args.max_windows)
+            df_b = one.get(b, pd.DataFrame())
+            all_df[b] = df_b
+            logger.info(
+                "[PREP] (%d/%d) 完成 %s | rows=%d cols=%d | 耗时=%.2fs",
+                i,
+                len(bearings),
+                b,
+                len(df_b),
+                int(df_b.shape[1]) if not df_b.empty else 0,
+                time.time() - t_b0,
+            )
+        except Exception as e:
+            all_df[b] = pd.DataFrame()
+            logger.exception("[PREP] (%d/%d) 处理 %s 失败: %s", i, len(bearings), b, e)
+
+    logger.info("[PREP] 全部轴承构建完成，总耗时=%.2fs", time.time() - t0)
+
+    # -----------------------
+    # LOBO evaluation
+    # -----------------------
     summary_rows: List[Dict[str, object]] = []
     for target in bearings:
+        logger.info("[LOBO] 开始 target=%s", target)
         test_df = all_df.get(target, pd.DataFrame())
         train_parts = [all_df[b] for b in bearings if b != target and not all_df[b].empty]
         train_df = pd.concat(train_parts, ignore_index=True) if train_parts else pd.DataFrame()
 
         if test_df.empty or train_df.empty:
-            logger.warning("skip %s: empty train/test split", target)
+            logger.warning("[LOBO] skip %s: empty train/test split (train=%d test=%d)", target, len(train_df), len(test_df))
             continue
 
         feature_cols = _feature_columns(test_df)
         feature_cols = [c for c in feature_cols if c in train_df.columns]
+        logger.info("[LOBO] %s | feature_dim=%d | train=%d test=%d", target, len(feature_cols), len(train_df), len(test_df))
+
         x_train = train_df[feature_cols].to_numpy(dtype=float)
         y_train = train_df["future_health_stage"].to_numpy(dtype=int)
         x_test = test_df[feature_cols].to_numpy(dtype=float)
         y_test = test_df["future_health_stage"].to_numpy(dtype=int)
 
         diagnoser = OfflineFaultDiagnoser(cfg)
+        t_fit0 = time.time()
         diagnoser.fit(x_train, y_train)
+        logger.info("[LOBO] %s | model=%s | fit耗时=%.2fs", target, diagnoser.model_kind, time.time() - t_fit0)
+
         n_classes = len(FAULT_LABELS)
+        t_pred0 = time.time()
         probs = diagnoser.predict_proba(x_test, n_classes=n_classes)
+        logger.info("[LOBO] %s | predict_proba耗时=%.2fs", target, time.time() - t_pred0)
+
         y_pred = np.argmax(probs, axis=1).astype(int)
         metrics = classification_metrics(y_test, y_pred, n_classes=n_classes)
 
@@ -154,6 +198,7 @@ def run_lobo(cfg: PipelineConfig, args: argparse.Namespace, logger: logging.Logg
         if missing_hi_features:
             logger.warning("%s missing HI features: %s", target, missing_hi_features)
 
+        t_loop0 = time.time()
         for i, (_, row) in enumerate(test_df.iterrows()):
             feat_row = {k: float(row[k]) for k in cfg.degradation_directions if k in row}
             hi = hi_builder.update(feat_row)
@@ -191,6 +236,8 @@ def run_lobo(cfg: PipelineConfig, args: argparse.Namespace, logger: logging.Logg
                 "method": rul["method"],
                 "future_hi": json.dumps(rul["future_hi"], ensure_ascii=False),
             })
+
+        logger.info("[LOBO] %s | per-row chain耗时=%.2fs (rows=%d)", target, time.time() - t_loop0, len(test_df))
 
         _write_rows_csv(diag_rows, cfg.output_dir / "diagnosis" / f"{target}_diagnosis.csv")
         _write_rows_csv(hi_rows, cfg.output_dir / "hi" / f"{target}_hi.csv")
